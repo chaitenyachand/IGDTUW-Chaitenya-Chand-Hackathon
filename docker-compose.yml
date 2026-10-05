@@ -46,6 +46,17 @@ services:
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}
-
+  nlp:
+    build: .
+    command: python -m sentinel.nlp.worker
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://sentinel:sentinel@db:5432/sentinel
+      REDIS_URL: redis://redis:6379/0
+    restart: unless-stopped
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      
 volumes:
   pgdata:
