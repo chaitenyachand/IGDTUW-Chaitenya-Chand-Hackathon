@@ -43,3 +43,16 @@ def test_rss_parse_skips_untitled_and_cleans_html():
     assert d.text == "Fed holds rates. Policy makers kept rates unchanged."
     assert d.canonical_url == "https://x.com/a"
     assert d.published_at == datetime(2026, 10, 2, 14, 0, tzinfo=timezone.utc)
+
+class _FailingClient:
+    async def get(self, *a, **k):
+        raise RuntimeError("403 Forbidden")
+
+
+async def test_edgar_raises_when_every_request_fails():
+    import pytest
+    from sentinel.ingest.edgar import EdgarFilings
+    c = EdgarFilings(_FailingClient(), 600)
+    c._ciks = {"AAPL": (320193, "Apple Inc."), "MSFT": (789019, "Microsoft Corp.")}
+    with pytest.raises(RuntimeError, match="all 2 EDGAR requests failed"):
+        await c.fetch()

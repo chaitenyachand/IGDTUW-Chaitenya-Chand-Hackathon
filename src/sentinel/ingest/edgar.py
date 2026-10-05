@@ -79,7 +79,7 @@ def parse_submissions(js: dict, ticker: str, name: str, cik: int, cutoff: dateti
 class EdgarFilings(PollingConnector):
     name = "sec_edgar"
 
-    def __init__(self, client: httpx.AsyncClient, poll_seconds: int, lookback_days: int = 3):
+    def __init__(self, client: httpx.AsyncClient, poll_seconds: int, lookback_days: int = 30):
         self.client, self.poll_seconds, self.lookback_days = client, poll_seconds, lookback_days
         self._ciks = {}
 
@@ -98,13 +98,19 @@ class EdgarFilings(PollingConnector):
         if not self._ciks:
             await self._resolve()
         cutoff = datetime.now(timezone.utc) - timedelta(days=self.lookback_days)
-        docs = []
+        docs, failures, last_error = [], 0, None
         for ticker, (cik, name) in self._ciks.items():
             try:
                 r = await self.client.get(SUBMISSIONS_URL.format(cik=cik))
                 r.raise_for_status()
                 docs += parse_submissions(r.json(), ticker, name, cik, cutoff)
             except Exception as e:
+                failures, last_error = failures + 1, e
                 log.warning("edgar %s failed: %s", ticker, e)
             await asyncio.sleep(0.2)  # stay well below SEC's 10 requests/second limit
+        if self._ciks and failures == len(self._ciks):
+            # Never report 'ok with 0 items' when every request actually failed (e.g. blocked User-Agent).
+            raise RuntimeError(f"all {failures} EDGAR requests failed; last error: {last_error!r}")
+        log.info("edgar: %d filings in last %d days (%d/%d companies reachable)",
+                 len(docs), self.lookback_days, len(self._ciks) - failures, len(self._ciks))
         return docs

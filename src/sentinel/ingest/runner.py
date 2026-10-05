@@ -81,6 +81,7 @@ async def run_streaming(conn, pool, redis, index, stop: asyncio.Event, flush_eve
 
 async def main():
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     pool = await store.create_pool(settings.database_url)
     redis = aioredis.from_url(settings.redis_url)
     index = NearDuplicateIndex(max_distance=3)
