@@ -14,7 +14,7 @@ import redis.asyncio as aioredis
 
 from .. import store
 from ..config import settings
-from .features import compute_features
+from .features import PIPELINE_VERSION, compute_features
 
 log = logging.getLogger("nlp")
 IN_STREAM, OUT_STREAM, GROUP = "stream:documents", "stream:relevant", "nlp"
@@ -54,8 +54,9 @@ async def process_pending(pool, redis, batch: int = 500) -> int:
     while True:
         rows = await pool.fetch(
             f"SELECT {', '.join('d.' + c.strip() for c in COLS.split(','))} FROM documents d "
-            "LEFT JOIN doc_features f ON f.document_id = d.id WHERE f.document_id IS NULL "
-            "ORDER BY d.published_at DESC LIMIT $1", batch)
+            "LEFT JOIN doc_features f ON f.document_id = d.id "
+            "WHERE f.document_id IS NULL OR f.pipeline_version <> $2 "
+            "ORDER BY d.published_at DESC LIMIT $1", batch, PIPELINE_VERSION)
         if not rows:
             return total
         total += await process_rows(pool, redis, rows)

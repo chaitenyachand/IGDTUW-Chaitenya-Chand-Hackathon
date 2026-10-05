@@ -9,7 +9,7 @@ from .entities import link_entities
 from .lexicon import EDGAR_ITEM_EVENT, event_hits
 from .relevance import THRESHOLD, extract_signals, relevance_probability
 
-PIPELINE_VERSION = "nlp-0.1.0-rules"
+PIPELINE_VERSION = "nlp-0.1.1-rules"
 
 
 @dataclass
@@ -35,9 +35,11 @@ def compute_features(row) -> DocFeatures:
     title = clean_title(row["title"] or "", row["url"])
     text = f"{title}. {row['text']}" if row["text"] and row["text"] != row["title"] else title
     entities = link_entities(text, row["source_name"], meta)
-    n_companies = sum(1 for e in entities if e["kind"] == "company" and e["confidence"] >= 0.6)
+    companies = [e for e in entities if e["kind"] == "company"]
+    n_universe = sum(1 for e in companies if e["name"] is not None)
+    n_external = len(companies) - n_universe
 
-    signals = extract_signals(text, row["source_name"], meta, n_companies)
+    signals = extract_signals(text, row["source_name"], meta, n_universe, n_external)
     p = relevance_probability(signals)
 
     ev = event_hits(text)
