@@ -16,4 +16,4 @@ fred:      ## download macro series (needs FRED_API_KEY)
 check:     ## ping every data source and report status
 	docker compose run --rm api python -m sentinel.cli check-sources
 test:
-	PYTHONPATH=src pytest -q
+	docker compose run --rm api python -m pytest -q
