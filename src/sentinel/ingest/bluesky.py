@@ -14,6 +14,7 @@ from typing import Callable, Optional
 
 import websockets
 
+from ..nlp.filters import ADULT_LABELS, is_adult
 from ..universe import UNIVERSE
 from .base import Document, StreamingConnector, normalize_text
 
@@ -64,9 +65,13 @@ def parse_commit(msg: dict, matcher: Callable) -> Optional[Document]:
     langs = rec.get("langs") or []
     if langs and "en" not in langs:
         return None
+    if is_adult(text) or any(v.get("val") in ADULT_LABELS for v in (rec.get("labels") or {}).get("values", [])):
+        return None
     m = matcher(text)
     if not m:
         return None
+    if rec.get("reply") and m["reason"] != "cashtag":
+        return None  # conversational replies are mostly noise unless they carry a cashtag
     did, rkey = msg.get("did"), c.get("rkey")
     if not did or not rkey:
         return None

@@ -19,7 +19,7 @@ EVENT_PATTERNS = {
     "Macroeconomic": [r"inflation", r"interest rates?", r"rate (?:cut|hike)s?", r"central bank", r"federal reserve",
                       r"fomc", r"ecb", r"gdp", r"recession", r"unemployment", r"jobs report", r"payrolls?", r"cpi",
                       r"bond yields?", r"treasury yields?", r"economic growth", r"stimulus", r"budget deficit", r"imf"],
-    "Credit Event": [r"bankruptcy", r"chapter 11", r"insolvency", r"default(?:s|ed)?", r"downgrade[sd]?",
+    "Credit Event": [r"bankruptcy", r"chapter 11", r"insolvency", r"defaulted", r"defaults? on", r"(?:sovereign|debt|loan|credit|bond) defaults?", r"downgrade[sd]?",
                      r"credit rating", r"restructuring", r"debt crisis", r"delist(?:ed|ing)?", r"write-?offs?",
                      r"npas?", r"non-performing", r"missed payment", r"bank run", r"liquidity crunch"],
     "Merger/Acquisition": [r"acquires?", r"acquired", r"acquisitions?", r"mergers?", r"takeover", r"buyout",
