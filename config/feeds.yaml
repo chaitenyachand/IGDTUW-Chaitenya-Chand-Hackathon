@@ -1,0 +1,13 @@
+# Public RSS feeds. Only headline + summary are stored, always with a link back to the source.
+# Run `make check` to see which feeds respond; edit freely.
+feeds:
+  - {name: cnbc_top,            url: "https://www.cnbc.com/id/100003114/device/rss/rss.html"}
+  - {name: cnbc_finance,        url: "https://www.cnbc.com/id/10000664/device/rss/rss.html"}
+  - {name: bbc_business,        url: "http://feeds.bbci.co.uk/news/business/rss.xml"}
+  - {name: marketwatch_top,     url: "https://feeds.content.dowjones.io/public/rss/mw_topstories"}
+  - {name: marketwatch_realtime,url: "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines"}
+  - {name: yahoo_finance,       url: "https://finance.yahoo.com/news/rssindex"}
+  - {name: nyt_business,        url: "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml"}
+  - {name: guardian_business,   url: "https://www.theguardian.com/business/rss"}
+  - {name: fed_press,           url: "https://www.federalreserve.gov/feeds/press_all.xml"}
+  - {name: ecb_press,           url: "https://www.ecb.europa.eu/rss/press.html"}
