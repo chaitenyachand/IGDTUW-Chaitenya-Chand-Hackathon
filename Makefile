@@ -1,10 +1,12 @@
-.PHONY: up down logs seed prices fred check test api ingest
+.PHONY: up down logs migrate seed prices fred check test api ingest
 up:        ## start db + redis + api + ingest
 	docker compose up -d --build
 down:
 	docker compose down
 logs:
-	docker compose logs -f ingest api
+	docker compose logs -f ingest nlp api
+migrate:   ## apply new database migrations
+	docker compose run --rm api python -m sentinel.cli migrate
 seed:      ## load the 15-stock universe
 	docker compose run --rm api python -m sentinel.cli seed
 prices:    ## download price history (yfinance)

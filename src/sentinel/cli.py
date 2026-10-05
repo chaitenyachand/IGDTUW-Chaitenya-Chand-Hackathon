@@ -13,7 +13,22 @@ from . import store
 from .config import settings
 from .universe import FRED_SERIES, UNIVERSE, all_price_symbols
 
-
+async def migrate():
+    """Apply every db/init/*.sql file once, in order (the same files a fresh database runs on first start)."""
+    from pathlib import Path
+    pool = await store.create_pool(settings.database_url)
+    await pool.execute("CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, "
+                       "applied_at TIMESTAMPTZ NOT NULL DEFAULT now())")
+    done = {r["filename"] for r in await pool.fetch("SELECT filename FROM schema_migrations")}
+    for f in sorted(Path("db/init").glob("*.sql")):
+        if f.name in done:
+            print(f"skip   {f.name}")
+            continue
+        await pool.execute(f.read_text())
+        await pool.execute("INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT DO NOTHING", f.name)
+        print(f"applied {f.name}")
+    await pool.close()
+    
 async def seed():
     pool = await store.create_pool(settings.database_url)
     async with pool.acquire() as con:
@@ -115,11 +130,11 @@ async def check_sources():
 
 def main():
     p = argparse.ArgumentParser(prog="sentinel")
-    p.add_argument("command", choices=["seed", "sync-prices", "sync-fred", "check-sources"])
+    p.add_argument("command", choices=["migrate", "seed", "sync-prices", "sync-fred", "check-sources"])
     a = p.parse_args()
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    asyncio.run({"seed": seed, "sync-prices": sync_prices_cmd, "sync-fred": sync_fred_cmd,
+    asyncio.run({"migrate": migrate, "seed": seed, "sync-prices": sync_prices_cmd, "sync-fred": sync_fred_cmd,
                  "check-sources": check_sources}[a.command]())
 
 
