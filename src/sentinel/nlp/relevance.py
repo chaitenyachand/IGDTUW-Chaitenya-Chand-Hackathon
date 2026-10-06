@@ -7,10 +7,13 @@ from __future__ import annotations
 
 import math
 
-from .filters import is_adult, is_automated
+from .filters import is_adult, is_automated, is_gibberish
 from .lexicon import MARKET_RX, MONEY_RX, NEGATIVE_RX, distinct_hits, event_hits
 
 THRESHOLD = 0.5
+# Event types that move markets on their own; the rest need supporting evidence (market terms, money, entities).
+HARD_EVENTS = {"Geopolitical", "Macroeconomic", "Credit Event", "Cyber", "Merger/Acquisition"}
+FINANCE_FEEDS = {"rss:cnbc_finance", "rss:marketwatch_top", "rss:marketwatch_realtime", "rss:yahoo_finance"}
 
 
 def source_prior(source_name: str, meta: dict) -> float:
@@ -18,8 +21,10 @@ def source_prior(source_name: str, meta: dict) -> float:
         return 6.0
     if source_name in ("rss:fed_press", "rss:ecb_press"):
         return 2.5
+    if source_name in FINANCE_FEEDS:
+        return 1.0
     if source_name.startswith("rss:"):
-        return 0.8
+        return -0.2       # general news feeds: need content evidence
     if source_name == "gdelt":
         return -0.8
     if source_name == "bluesky":
@@ -37,20 +42,24 @@ def extract_signals(text: str, source_name: str, meta: dict, n_universe: int, n_
         "universe_entities": n_universe,
         "external_cashtags": n_external,
         "event_categories": len(ev),
+        "event_hard": any(k in HARD_EVENTS for k in ev),
         "market_terms": len(distinct_hits(MARKET_RX, text)),
         "has_money": bool(MONEY_RX.search(text)),
         "negative_terms": len(distinct_hits(NEGATIVE_RX, text)),
         "automated": is_automated(text),
         "adult": is_adult(text),
+        "gibberish": is_gibberish(text),
     }
 
 
 def relevance_probability(s: dict) -> float:
-    if s["adult"]:
+    if s["adult"] or s["gibberish"]:
         return 0.0
     logit = s["source_prior"]
     logit += 1.6 if s["universe_entities"] else (0.6 if s["external_cashtags"] else 0.0)
-    logit += {0: 0.0, 1: 1.0}.get(s["event_categories"], 1.5)
+    if s["event_categories"]:
+        logit += 1.0 if s["event_hard"] else 0.5
+        logit += 0.5 if s["event_categories"] >= 2 else 0.0
     logit += {0: 0.0, 1: 0.8}.get(s["market_terms"], 1.3)
     logit += 0.6 if s["has_money"] else 0.0
     logit -= 1.4 * min(s["negative_terms"], 2)

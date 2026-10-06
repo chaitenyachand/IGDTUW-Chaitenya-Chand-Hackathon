@@ -9,7 +9,7 @@ from .entities import link_entities
 from .lexicon import EDGAR_ITEM_EVENT, event_hits
 from .relevance import THRESHOLD, extract_signals, relevance_probability
 
-PIPELINE_VERSION = "nlp-0.1.1-rules"
+PIPELINE_VERSION = "nlp-0.1.2-rules"
 
 
 @dataclass

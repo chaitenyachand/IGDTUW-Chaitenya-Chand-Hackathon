@@ -42,7 +42,7 @@ MARKET_RX = _union([
     r"share price", r"wall street", r"nasdaq", r"s&p 500", r"dow jones", r"ftse", r"nikkei", r"sensex", r"nifty",
     r"oil", r"crude", r"brent", r"lng", r"natural gas", r"gold prices?", r"bonds?", r"yields?", r"forex",
     r"currency", r"investors?", r"analysts?", r"dividends?", r"valuation", r"markets?", r"commodit(?:y|ies)",
-    r"inflows?", r"financing",
+    r"inflows?", r"financing", r"aramco", r"refiner(?:y|ies)", r"pipelines?", r"opec",
 ])
 
 NEGATIVE_RX = _union([
