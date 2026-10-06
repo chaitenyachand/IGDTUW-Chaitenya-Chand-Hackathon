@@ -31,6 +31,8 @@ services:
       DATABASE_URL: postgresql://sentinel:sentinel@db:5432/sentinel
       REDIS_URL: redis://redis:6379/0
     ports: ["8000:8000"]
+    volumes:
+      - ./data:/app/data
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}

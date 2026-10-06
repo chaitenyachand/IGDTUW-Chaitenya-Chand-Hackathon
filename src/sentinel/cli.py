@@ -29,6 +29,25 @@ async def migrate():
         print(f"applied {f.name}")
     await pool.close()
     
+async def labels_sample():
+    """Write a stratified headline sample to data/labeling/sample_300.txt for hand-labelling."""
+    from pathlib import Path
+    from .tools.labeling import format_line, stratified_sample
+    pool = await store.create_pool(settings.database_url)
+    rows = await pool.fetch("""SELECT d.id, d.source_name, f.clean_title AS title, f.relevant
+        FROM documents d JOIN doc_features f ON f.document_id = d.id
+        WHERE d.dup_of IS NULL AND d.published_at > now() - interval '7 days'
+          AND NOT COALESCE((f.features->>'automated')::boolean, false)
+          AND NOT COALESCE((f.features->>'adult')::boolean, false)
+          AND NOT COALESCE((f.features->>'gibberish')::boolean, false)""")
+    sample = stratified_sample([dict(r) for r in rows], n=300)
+    out = Path("data/labeling")
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "sample_300.txt").write_text("\n".join(format_line(r) for r in sample) + "\n")
+    print(f"wrote {len(sample)} lines to data/labeling/sample_300.txt")
+    await pool.close()
+
+
 async def seed():
     pool = await store.create_pool(settings.database_url)
     async with pool.acquire() as con:
@@ -130,11 +149,11 @@ async def check_sources():
 
 def main():
     p = argparse.ArgumentParser(prog="sentinel")
-    p.add_argument("command", choices=["migrate", "seed", "sync-prices", "sync-fred", "check-sources"])
+    p.add_argument("command", choices=["migrate", "labels-sample", "seed", "sync-prices", "sync-fred", "check-sources"])
     a = p.parse_args()
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    asyncio.run({"migrate": migrate, "seed": seed, "sync-prices": sync_prices_cmd, "sync-fred": sync_fred_cmd,
+    asyncio.run({"migrate": migrate, "labels-sample": labels_sample, "seed": seed, "sync-prices": sync_prices_cmd, "sync-fred": sync_fred_cmd,
                  "check-sources": check_sources}[a.command]())
 
 
