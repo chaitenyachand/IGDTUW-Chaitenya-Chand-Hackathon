@@ -48,6 +48,55 @@ async def labels_sample():
     await pool.close()
 
 
+async def import_labels():
+    """Load data/labeling/gold_labels.csv (id prefix, relevant, event, sentiment) into gold_labels."""
+    import csv
+    pool = await store.create_pool(settings.database_url)
+    ok = missing = ambiguous = 0
+    with open("data/labeling/gold_labels.csv", newline="") as fh:
+        for r in csv.DictReader(fh):
+            ids = await pool.fetch("SELECT id FROM documents WHERE id LIKE $1", r["id"].strip() + "%")
+            if not ids:
+                missing += 1
+                continue
+            if len(ids) > 1:
+                ambiguous += 1
+                continue
+            sent = int(r["sentiment"]) if r["sentiment"].strip() else None
+            await pool.execute(
+                """INSERT INTO gold_labels (document_id, relevant, event_type, sentiment) VALUES ($1,$2,$3,$4)
+                   ON CONFLICT (document_id) DO UPDATE SET relevant=EXCLUDED.relevant,
+                     event_type=EXCLUDED.event_type, sentiment=EXCLUDED.sentiment, labeled_at=now()""",
+                ids[0]["id"], r["relevant"].strip() == "1", r["event"].strip(), sent)
+            ok += 1
+    print(f"imported {ok} labels; {missing} ids not found in the database; {ambiguous} ambiguous prefixes")
+    await pool.close()
+
+
+async def eval_gate():
+    """Compare the current relevance gate with the gold labels."""
+    from .tools.evaluation import binary_metrics, fmt_metrics
+    pool = await store.create_pool(settings.database_url)
+    rows = await pool.fetch(
+        """SELECT d.source_name, f.relevant AS pred, g.relevant AS gold, f.relevance, f.clean_title
+           FROM gold_labels g JOIN doc_features f ON f.document_id = g.document_id
+           JOIN documents d ON d.id = g.document_id""")
+    if not rows:
+        print("no gold labels found: run import-labels first")
+        return
+    group = lambda r: r["source_name"].split(":")[0]
+    print(fmt_metrics("ALL", binary_metrics((r["pred"], r["gold"]) for r in rows)))
+    for g in sorted({group(r) for r in rows}):
+        print(fmt_metrics(g, binary_metrics((r["pred"], r["gold"]) for r in rows if group(r) == g)))
+    for title, pred, gold in (("FALSE POSITIVES (gate kept, labelled irrelevant)", True, False),
+                              ("FALSE NEGATIVES (gate blocked, labelled relevant)", False, True)):
+        sel = sorted((r for r in rows if r["pred"] == pred and r["gold"] == gold), key=lambda r: -r["relevance"])[:12]
+        print(f"\n{title}")
+        for r in sel:
+            print(f"  {r['relevance']:.2f} | {group(r):<9} | {r['clean_title'][:100]}")
+    await pool.close()
+
+
 async def seed():
     pool = await store.create_pool(settings.database_url)
     async with pool.acquire() as con:
@@ -149,11 +198,11 @@ async def check_sources():
 
 def main():
     p = argparse.ArgumentParser(prog="sentinel")
-    p.add_argument("command", choices=["migrate", "labels-sample", "seed", "sync-prices", "sync-fred", "check-sources"])
+    p.add_argument("command", choices=["migrate", "labels-sample", "import-labels", "eval-gate", "seed", "sync-prices", "sync-fred", "check-sources"])
     a = p.parse_args()
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    asyncio.run({"migrate": migrate, "labels-sample": labels_sample, "seed": seed, "sync-prices": sync_prices_cmd, "sync-fred": sync_fred_cmd,
+    asyncio.run({"migrate": migrate, "labels-sample": labels_sample, "import-labels": import_labels, "eval-gate": eval_gate, "seed": seed, "sync-prices": sync_prices_cmd, "sync-fred": sync_fred_cmd,
                  "check-sources": check_sources}[a.command]())
 
 
