@@ -49,11 +49,15 @@ async def labels_sample():
 
 
 async def import_labels():
-    """Load data/labeling/gold_labels.csv (id prefix, relevant, event, sentiment) into gold_labels."""
+    """Load a gold CSV (id prefix, relevant, event, sentiment) into gold_labels.
+    Env: GOLD_FILE (default data/labeling/gold_labels.csv) and GOLD_SPLIT ('dev' or 'test')."""
     import csv
+    import os
+    path = os.environ.get("GOLD_FILE", "data/labeling/gold_labels.csv")
+    split = os.environ.get("GOLD_SPLIT", "dev")
     pool = await store.create_pool(settings.database_url)
     ok = missing = ambiguous = 0
-    with open("data/labeling/gold_labels.csv", newline="") as fh:
+    with open(path, newline="") as fh:
         for r in csv.DictReader(fh):
             ids = await pool.fetch("SELECT id FROM documents WHERE id LIKE $1", r["id"].strip() + "%")
             if not ids:
@@ -64,25 +68,27 @@ async def import_labels():
                 continue
             sent = int(r["sentiment"]) if r["sentiment"].strip() else None
             await pool.execute(
-                """INSERT INTO gold_labels (document_id, relevant, event_type, sentiment) VALUES ($1,$2,$3,$4)
-                   ON CONFLICT (document_id) DO UPDATE SET relevant=EXCLUDED.relevant,
-                     event_type=EXCLUDED.event_type, sentiment=EXCLUDED.sentiment, labeled_at=now()""",
-                ids[0]["id"], r["relevant"].strip() == "1", r["event"].strip(), sent)
+                """INSERT INTO gold_labels (document_id, relevant, event_type, sentiment, split) VALUES ($1,$2,$3,$4,$5)
+                   ON CONFLICT (document_id) DO UPDATE SET relevant=EXCLUDED.relevant, event_type=EXCLUDED.event_type,
+                     sentiment=EXCLUDED.sentiment, split=EXCLUDED.split, labeled_at=now()""",
+                ids[0]["id"], r["relevant"].strip() == "1", r["event"].strip(), sent, split)
             ok += 1
-    print(f"imported {ok} labels; {missing} ids not found in the database; {ambiguous} ambiguous prefixes")
+    print(f"imported {ok} '{split}' labels from {path}; {missing} ids not found in the database; {ambiguous} ambiguous prefixes")
     await pool.close()
 
 
 async def eval_gate():
-    """Compare the current relevance gate with the gold labels."""
+    """Compare the current relevance gate with the gold labels (dev split unless GOLD_SPLIT is set)."""
+    import os
     from .tools.evaluation import binary_metrics, fmt_metrics
+    split = os.environ.get("GOLD_SPLIT", "dev")
     pool = await store.create_pool(settings.database_url)
     rows = await pool.fetch(
         """SELECT d.source_name, f.relevant AS pred, g.relevant AS gold, f.relevance, f.clean_title
            FROM gold_labels g JOIN doc_features f ON f.document_id = g.document_id
-           JOIN documents d ON d.id = g.document_id""")
+           JOIN documents d ON d.id = g.document_id WHERE g.split = $1""", split)
     if not rows:
-        print("no gold labels found: run import-labels first")
+        print(f"no '{split}' gold labels found: run import-labels first")
         return
     group = lambda r: r["source_name"].split(":")[0]
     print(fmt_metrics("ALL", binary_metrics((r["pred"], r["gold"]) for r in rows)))
@@ -94,6 +100,77 @@ async def eval_gate():
         print(f"\n{title}")
         for r in sel:
             print(f"  {r['relevance']:.2f} | {group(r):<9} | {r['clean_title'][:100]}")
+    await pool.close()
+
+
+async def train_baseline():
+    """Cross-validated TF-IDF classifiers vs the rule pipeline, scored on the gold labels."""
+    from .ml.baseline import format_report, make_tfidf_lr, run_tasks, save_json
+    from .ml.data import load_gold, model_text
+    pool = await store.create_pool(settings.database_url)
+    rows = await load_gold(pool)
+    await pool.close()
+    if len(rows) < 30:
+        print(f"only {len(rows)} gold labels in the database: run import-labels first")
+        return
+    res = run_tasks(rows, [model_text(r) for r in rows], make_tfidf_lr, name="tfidf+logistic-regression")
+    print(format_report(res))
+    save_json("data/models/metrics_baseline.json", res)
+    print("\nsaved data/models/metrics_baseline.json")
+
+
+async def eval_transformers():
+    """MiniLM embeddings, zero-shot FinBERT and the hybrid models, scored on the dev gold labels (ml image)."""
+    import json
+    import os
+    from .ml import transformers_eval as te
+    from .ml.baseline import format_report, make_dense_lr, run_tasks, save_json
+    from .ml.data import load_gold
+    from .ml.hybrid import run_hybrid, summary
+    pool = await store.create_pool(settings.database_url)
+    rows = await load_gold(pool, "dev")
+    await pool.close()
+    if len(rows) < 30:
+        print(f"only {len(rows)} dev gold labels in the database: run import-labels first")
+        return
+    titles = [r["title"] for r in rows]
+    emb = te.embed(titles)
+    probs = te.finbert_probs(titles)
+    by_title = dict(zip(titles, probs))
+    res_emb = run_tasks(rows, te.with_source_onehot(emb, rows), make_dense_lr, name="MiniLM-embeddings+logistic-regression")
+    res_hyb = run_hybrid(rows, emb, probs)
+    fin = te.eval_finbert(rows, probs_fn=lambda ts: [by_title[t] for t in ts])
+    print(format_report(res_emb))
+    print()
+    print(format_report(res_hyb))
+    named = {}
+    if os.path.exists("data/models/metrics_baseline.json"):
+        named["TF-IDF + logistic regression"] = json.load(open("data/models/metrics_baseline.json"))
+    named["MiniLM + logistic regression"] = res_emb
+    named["hybrid (embeddings + rules + FinBERT)"] = res_hyb
+    print(summary(named, fin))
+    save_json("data/models/metrics_transformers.json",
+              {"embeddings": res_emb, "hybrid": res_hyb, "finbert_zero_shot": fin})
+    print("\nsaved data/models/metrics_transformers.json")
+
+
+async def labels_sample_random():
+    """Uniform random sample (NOT stratified) for an unbiased, held-out test set."""
+    from pathlib import Path
+    from .tools.labeling import format_line
+    pool = await store.create_pool(settings.database_url)
+    rows = await pool.fetch("""SELECT d.id, d.source_name, f.clean_title AS title
+        FROM documents d JOIN doc_features f ON f.document_id = d.id
+        WHERE d.dup_of IS NULL AND d.published_at > now() - interval '7 days'
+          AND NOT COALESCE((f.features->>'automated')::boolean, false)
+          AND NOT COALESCE((f.features->>'adult')::boolean, false)
+          AND NOT COALESCE((f.features->>'gibberish')::boolean, false)
+          AND d.id NOT IN (SELECT document_id FROM gold_labels)
+        ORDER BY md5(d.id || 'test-split-v1') LIMIT 150""")
+    out = Path("data/labeling")
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "random_150.txt").write_text("\n".join(format_line(dict(r)) for r in rows) + "\n")
+    print(f"wrote {len(rows)} lines to data/labeling/random_150.txt")
     await pool.close()
 
 
@@ -198,11 +275,11 @@ async def check_sources():
 
 def main():
     p = argparse.ArgumentParser(prog="sentinel")
-    p.add_argument("command", choices=["migrate", "labels-sample", "import-labels", "eval-gate", "seed", "sync-prices", "sync-fred", "check-sources"])
+    p.add_argument("command", choices=["migrate", "labels-sample", "import-labels", "eval-gate", "labels-sample-random", "train-baseline", "eval-transformers", "seed", "sync-prices", "sync-fred", "check-sources"])
     a = p.parse_args()
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    asyncio.run({"migrate": migrate, "labels-sample": labels_sample, "import-labels": import_labels, "eval-gate": eval_gate, "seed": seed, "sync-prices": sync_prices_cmd, "sync-fred": sync_fred_cmd,
+    asyncio.run({"migrate": migrate, "labels-sample": labels_sample, "import-labels": import_labels, "eval-gate": eval_gate, "labels-sample-random": labels_sample_random, "train-baseline": train_baseline, "eval-transformers": eval_transformers, "seed": seed, "sync-prices": sync_prices_cmd, "sync-fred": sync_fred_cmd,
                  "check-sources": check_sources}[a.command]())
 
 
