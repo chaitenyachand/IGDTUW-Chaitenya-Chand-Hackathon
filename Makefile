@@ -1,4 +1,4 @@
-.PHONY: up down logs labels labels-random import-labels import-test-labels eval-gate train-baseline eval-transformers migrate seed prices fred check test api ingest
+.PHONY: up down logs train-final serve serve-logs labels labels-random import-labels import-test-labels eval-gate train-baseline eval-transformers migrate seed prices fred check test api ingest
 up:        ## start db + redis + api + ingest
 	docker compose up -d --build
 down:
@@ -19,6 +19,12 @@ labels-random: ## write a uniform random sample (held-out test set) to data/labe
 	docker compose run --rm api python -m sentinel.cli labels-sample-random
 import-test-labels: ## load data/labeling/test_labels.csv as the held-out test split
 	docker compose run --rm -e GOLD_FILE=data/labeling/test_labels.csv -e GOLD_SPLIT=test api python -m sentinel.cli import-labels
+train-final: ## train the frozen production models and save models/hybrid_v1.joblib
+	docker compose --profile ml run --rm --build ml python -m sentinel.cli train-final
+serve:     ## start the model-serving worker (writes live signals)
+	docker compose --profile ml up -d --build serve
+serve-logs:
+	docker compose --profile ml logs -f serve
 migrate:   ## apply new database migrations
 	docker compose run --rm api python -m sentinel.cli migrate
 seed:      ## load the 15-stock universe

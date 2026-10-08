@@ -174,6 +174,24 @@ async def labels_sample_random():
     await pool.close()
 
 
+async def train_final():
+    """Train the frozen production models on the dev gold labels and save models/hybrid_v1.joblib (ml image)."""
+    from .ml import transformers_eval as te
+    from .ml.data import load_gold
+    from .ml.train_final import ARTIFACT_PATH, save_artifacts, train_artifacts
+    pool = await store.create_pool(settings.database_url)
+    rows = await load_gold(pool, "dev")
+    await pool.close()
+    if len(rows) < 30:
+        print(f"only {len(rows)} dev gold labels in the database: run import-labels first")
+        return
+    art = train_artifacts(rows, te.embed([r["title"] for r in rows]))
+    save_artifacts(art, ARTIFACT_PATH)
+    print(f"saved {ARTIFACT_PATH}: {art['version']}  trained on {art['n_train']} labels "
+          f"({art['n_relevant']} relevant); event classes {art['event_classes']}; "
+          f"merged into Other: {art['merged_into_other']}")
+
+
 async def seed():
     pool = await store.create_pool(settings.database_url)
     async with pool.acquire() as con:
@@ -275,11 +293,11 @@ async def check_sources():
 
 def main():
     p = argparse.ArgumentParser(prog="sentinel")
-    p.add_argument("command", choices=["migrate", "labels-sample", "import-labels", "eval-gate", "labels-sample-random", "train-baseline", "eval-transformers", "seed", "sync-prices", "sync-fred", "check-sources"])
+    p.add_argument("command", choices=["migrate", "labels-sample", "train-final", "import-labels", "eval-gate", "labels-sample-random", "train-baseline", "eval-transformers", "seed", "sync-prices", "sync-fred", "check-sources"])
     a = p.parse_args()
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    asyncio.run({"migrate": migrate, "labels-sample": labels_sample, "import-labels": import_labels, "eval-gate": eval_gate, "labels-sample-random": labels_sample_random, "train-baseline": train_baseline, "eval-transformers": eval_transformers, "seed": seed, "sync-prices": sync_prices_cmd, "sync-fred": sync_fred_cmd,
+    asyncio.run({"migrate": migrate, "labels-sample": labels_sample, "import-labels": import_labels, "eval-gate": eval_gate, "train-final": train_final, "labels-sample-random": labels_sample_random, "train-baseline": train_baseline, "eval-transformers": eval_transformers, "seed": seed, "sync-prices": sync_prices_cmd, "sync-fred": sync_fred_cmd,
                  "check-sources": check_sources}[a.command]())
 
 

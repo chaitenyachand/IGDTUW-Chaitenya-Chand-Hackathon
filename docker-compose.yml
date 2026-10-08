@@ -60,5 +60,43 @@ services:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}
       
+  ml:
+    build:
+      context: .
+      dockerfile: Dockerfile.ml
+    profiles: ["ml"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://sentinel:sentinel@db:5432/sentinel
+      REDIS_URL: redis://redis:6379/0
+      HF_HOME: /models/hf
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - hfcache:/models/hf
+    depends_on:
+      db: {condition: service_healthy}
+
+  serve:
+    build:
+      context: .
+      dockerfile: Dockerfile.ml
+    profiles: ["ml"]
+    command: python -m sentinel.ml.serve_worker
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://sentinel:sentinel@db:5432/sentinel
+      REDIS_URL: redis://redis:6379/0
+      HF_HOME: /models/hf
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - hfcache:/models/hf
+    restart: unless-stopped
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
 volumes:
   pgdata:
+  hfcache:
