@@ -92,3 +92,24 @@ def summary(named: dict, finbert: dict | None = None) -> str:
         if "learned" in r["sentiment"]:
             lines.append(f"               {n:<46} {_fmt(r['sentiment']['learned'], 'macro_f1')}  accuracy={r['sentiment']['learned']['accuracy']:.2f}")
     return "\n".join(lines)
+
+
+# ---- production feature builders (fixed source columns so any batch gives the same feature layout) ----
+SOURCE_GROUPS = ["bluesky", "gdelt", "reddit", "rss", "sec_edgar"]
+
+
+def fixed_source_onehot(rows: list) -> np.ndarray:
+    from .data import source_group
+    out = np.zeros((len(rows), len(SOURCE_GROUPS)))
+    for i, r in enumerate(rows):
+        g = source_group(r["source_name"])
+        if g in SOURCE_GROUPS:
+            out[i, SOURCE_GROUPS.index(g)] = 1.0
+    return out
+
+
+def relevance_event_matrices(rows: list, emb: np.ndarray):
+    """Feature matrices for the relevance and event models, identical in training and serving."""
+    base = np.hstack([emb, fixed_source_onehot(rows)])
+    rules = np.array([rule_features(r) for r in rows])
+    return np.hstack([base, rules]), np.hstack([base, weak_event_onehot(rows), rules[:, [3, 4]]])
