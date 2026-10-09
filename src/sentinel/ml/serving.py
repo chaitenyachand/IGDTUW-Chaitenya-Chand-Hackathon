@@ -77,17 +77,25 @@ def integrity(source_name: str, automated: bool, corroborators: list) -> dict:
     return {"score": round(max(0.0, min(1.0, score)), 3), "corroboratedBy": list(corroborators), "flags": flags}
 
 
-def occlusion_weights(text: str, score_fn, top_k: int = 8, max_words: int = 40) -> list:
-    """Leave-one-out attribution: how much the sentiment score changes when each word is removed."""
+STOPWORDS = {"the", "a", "an", "of", "to", "in", "on", "at", "by", "for", "and", "or", "is", "are", "was", "were", "be",
+             "have", "has", "had", "would", "with", "as", "that", "this", "it", "its", "from", "up", "than"}
+
+
+def occlusion_weights(text: str, score_fn, top_k: int = 8, max_words: int = 40, normalize: bool = False) -> list:
+    """Leave-one-out attribution: how much the score changes when each word is removed.
+    Stopwords are skipped. With normalize=True the largest absolute weight becomes 1.0 (relative influence)."""
     words = text.split()[:max_words]
     if len(words) < 2:
         return []
     variants = [" ".join(words)] + [" ".join(words[:i] + words[i + 1:]) for i in range(len(words))]
     scores = score_fn(variants)
     base = scores[0]
-    out = [{"token": w, "weight": round(float(base - s), 4)} for w, s in zip(words, scores[1:])]
-    out = [o for o in out if o["weight"] != 0]
-    return sorted(out, key=lambda o: -abs(o["weight"]))[:top_k]
+    out = [{"token": w, "weight": float(base - s)} for w, s in zip(words, scores[1:])
+           if w.lower().strip(".,:;!?\"'()") not in STOPWORDS]
+    out = sorted((o for o in out if abs(o["weight"]) > 1e-9), key=lambda o: -abs(o["weight"]))[:top_k]
+    peak = max((abs(o["weight"]) for o in out), default=0.0)
+    scale = (1.0 / peak) if (normalize and peak) else 1.0
+    return [{"token": o["token"], "weight": round(o["weight"] * scale, 4)} for o in out]
 
 
 def build_signal(row: dict, meta: dict, entities: list, rel_p: float, ev_proba: dict, sent_probs: dict,
@@ -146,4 +154,8 @@ class Scorer:
         return self.finbert_fn(titles) if titles else []
 
     def explain(self, title: str) -> list:
-        return occlusion_weights(title, lambda ts: [finbert_score(p) for p in self.finbert_fn(ts)])
+        """Word influence on the sentiment, measured on the log-odds scale (the probability scale saturates near +-1)."""
+        def logodds(ts):
+            return [math.log(p.get("positive", 0.0) + 1e-4) - math.log(p.get("negative", 0.0) + 1e-4)
+                    for p in self.finbert_fn(ts)]
+        return occlusion_weights(title, logodds, normalize=True)

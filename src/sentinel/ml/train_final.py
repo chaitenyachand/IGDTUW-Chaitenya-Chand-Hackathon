@@ -5,12 +5,13 @@ from datetime import datetime, timezone
 
 import numpy as np
 
+from ..nlp.features import PIPELINE_VERSION
 from .baseline import MIN_EVENT_COUNT, make_dense_lr
 from .cv import merge_rare
 from .hybrid import relevance_event_matrices
 from .transformers_eval import EMBED_MODEL, FINBERT_MODEL
 
-VERSION = "hybrid-v1+finbert-zeroshot"
+VERSION = "hybrid-v1+finbert-zeroshot+" + PIPELINE_VERSION
 ARTIFACT_PATH = "models/hybrid_v1.joblib"
 
 
