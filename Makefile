@@ -1,4 +1,4 @@
-.PHONY: up down logs train-final serve serve-logs labels labels-random import-labels import-test-labels eval-gate train-baseline eval-transformers migrate seed prices fred check test api ingest
+.PHONY: up down logs eval-test train-final serve serve-logs labels labels-random import-labels import-test-labels eval-gate train-baseline eval-transformers migrate seed prices fred check test api ingest
 up:        ## start db + redis + api + ingest
 	docker compose up -d --build
 down:
@@ -25,6 +25,8 @@ serve:     ## start the model-serving worker (writes live signals)
 	docker compose --profile ml up -d --build serve
 serve-logs:
 	docker compose --profile ml logs -f serve
+eval-test: ## ONE-SHOT: score the frozen pipeline on the held-out test split
+	docker compose --profile ml run --rm --build ml python -m sentinel.cli eval-test
 migrate:   ## apply new database migrations
 	docker compose run --rm api python -m sentinel.cli migrate
 seed:      ## load the 15-stock universe

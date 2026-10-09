@@ -192,6 +192,38 @@ async def train_final():
           f"merged into Other: {art['merged_into_other']}")
 
 
+async def eval_test():
+    """Score the FROZEN pipeline on the random held-out test split. Meant to be run once, when the pipeline is final."""
+    from datetime import datetime, timezone
+    from .ml.baseline import save_json
+    from .ml.data import load_gold
+    from .ml.final_eval import evaluate_test, format_test_report
+    from .ml.serving import Scorer
+    from .ml.train_final import ARTIFACT_PATH
+    pool = await store.create_pool(settings.database_url)
+    rows = await load_gold(pool, "test")
+    if len(rows) < 30:
+        print(f"only {len(rows)} test labels in the database: run import-test-labels first")
+        await pool.close()
+        return
+    runs = await store.get_config(pool, "test_eval_runs") or []
+    if runs:
+        print(f"WARNING: the test split was already evaluated {len(runs)} time(s) (last: {runs[-1]['at']}). "
+              "Re-running after changing the pipeline turns the test set into a second dev set.")
+    scorer = Scorer.from_disk(ARTIFACT_PATH)
+    _, rel_p, ev_proba = scorer.score_relevance_event(rows)
+    probs = scorer.sentiment([r["title"] for r in rows])
+    res = evaluate_test(rows, rel_p, ev_proba, probs, scorer.threshold)
+    res["model_version"] = scorer.version
+    runs.append({"at": datetime.now(timezone.utc).isoformat(), "model_version": scorer.version})
+    res["run_number"] = len(runs)
+    await store.set_config(pool, "test_eval_runs", runs)
+    await pool.close()
+    print(format_test_report(res, len(runs)))
+    save_json("data/models/metrics_test.json", res)
+    print("\nsaved data/models/metrics_test.json")
+
+
 async def seed():
     pool = await store.create_pool(settings.database_url)
     async with pool.acquire() as con:
@@ -293,11 +325,11 @@ async def check_sources():
 
 def main():
     p = argparse.ArgumentParser(prog="sentinel")
-    p.add_argument("command", choices=["migrate", "labels-sample", "train-final", "import-labels", "eval-gate", "labels-sample-random", "train-baseline", "eval-transformers", "seed", "sync-prices", "sync-fred", "check-sources"])
+    p.add_argument("command", choices=["migrate", "labels-sample", "eval-test", "train-final", "import-labels", "eval-gate", "labels-sample-random", "train-baseline", "eval-transformers", "seed", "sync-prices", "sync-fred", "check-sources"])
     a = p.parse_args()
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    asyncio.run({"migrate": migrate, "labels-sample": labels_sample, "import-labels": import_labels, "eval-gate": eval_gate, "train-final": train_final, "labels-sample-random": labels_sample_random, "train-baseline": train_baseline, "eval-transformers": eval_transformers, "seed": seed, "sync-prices": sync_prices_cmd, "sync-fred": sync_fred_cmd,
+    asyncio.run({"migrate": migrate, "labels-sample": labels_sample, "import-labels": import_labels, "eval-gate": eval_gate, "eval-test": eval_test, "train-final": train_final, "labels-sample-random": labels_sample_random, "train-baseline": train_baseline, "eval-transformers": eval_transformers, "seed": seed, "sync-prices": sync_prices_cmd, "sync-fred": sync_fred_cmd,
                  "check-sources": check_sources}[a.command]())
 
 
