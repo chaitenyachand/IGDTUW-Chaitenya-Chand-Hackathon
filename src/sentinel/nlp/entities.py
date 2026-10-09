@@ -33,8 +33,17 @@ for s in UNIVERSE:
 _BY_TICKER = {s.ticker: s for s in UNIVERSE}
 
 
+_URL_RX = re.compile(
+    r"(?:https?://|www\.)\S+|\b[\w-]+(?:\.[\w-]+)*\.(?:com|org|net|io|co|uk|gov|edu|google|ly|me|tv)(?:/\S*)?", re.I)
+
+
+def strip_urls(text: str) -> str:
+    return _URL_RX.sub(" ", text)
+
+
 def link_entities(text: str, source_name: str = "", meta: dict | None = None) -> list:
     meta = meta or {}
+    text = strip_urls(text)
     found: dict = {}
 
     def add(key, name, ticker, kind, conf, evidence):
