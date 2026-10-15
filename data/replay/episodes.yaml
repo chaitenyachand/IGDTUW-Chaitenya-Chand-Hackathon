@@ -1,0 +1,54 @@
+# Demo Director episodes (design section 9). Each episode is a REAL past market episode.
+#
+# `make replay-fetch EPISODE=<id>` downloads the real archived articles for the window from the public GDELT 2.0 GKG
+# archive (the same dataset and parser the live connector uses) and writes data/replay/<id>.jsonl. Nothing here is typed
+# in: this file only says WHICH window and WHICH keywords to pull. Dates come from the public record and were compiled
+# with AI assistance: spot-check them (as with the PRECEDENT event library).
+#
+#   id          file name and API id
+#   start, end  UTC window of publication times to replay
+#   keywords    a headline must contain one of these (case-insensitive) to be kept
+#   eventType   the event class the episode is expected to show (display hint only, never used by the models)
+episodes:
+  - id: svb-2023-03
+    title: Silicon Valley Bank collapses
+    description: SVB fails on March 10, Signature Bank follows, regulators announce a backstop on March 12.
+    eventType: Credit Event
+    start: "2023-03-09T00:00:00Z"
+    end: "2023-03-14T00:00:00Z"
+    keywords: ["Silicon Valley Bank", "SVB", "Signature Bank", "First Republic", "bank run", "bank failure", "FDIC", "deposit"]
+  - id: ukraine-2022-02
+    title: Russia invades Ukraine
+    description: Full-scale invasion begins on the morning of February 24; sanctions and an oil spike follow.
+    eventType: Geopolitical
+    start: "2022-02-23T12:00:00Z"
+    end: "2022-02-26T00:00:00Z"
+    keywords: ["Ukraine", "Russia", "invasion", "Putin", "sanction", "Kyiv", "Brent", "crude"]
+  - id: hamas-2023-10
+    title: Hamas attacks Israel
+    description: The October 7 attack and the first trading days of the war in Gaza.
+    eventType: Geopolitical
+    start: "2023-10-07T00:00:00Z"
+    end: "2023-10-11T00:00:00Z"
+    keywords: ["Israel", "Hamas", "Gaza", "oil price", "Middle East"]
+  - id: tariffs-2025-04
+    title: US announces sweeping reciprocal tariffs
+    description: The April 2 announcement, a global selloff, and the 90-day pause on April 9.
+    eventType: Geopolitical
+    start: "2025-04-02T18:00:00Z"
+    end: "2025-04-10T00:00:00Z"
+    keywords: ["tariff", "trade war", "Liberation Day", "reciprocal"]
+  - id: deepseek-2025-01
+    title: DeepSeek triggers a global tech selloff
+    description: A low-cost Chinese AI model hits Nvidia and chip stocks on January 27.
+    eventType: Product Launch
+    start: "2025-01-26T00:00:00Z"
+    end: "2025-01-29T00:00:00Z"
+    keywords: ["DeepSeek", "Nvidia", "AI stocks", "chip stocks", "Nasdaq"]
+  - id: colonial-2021-05
+    title: Colonial Pipeline shut by ransomware
+    description: The largest US fuel pipeline halts on May 7; fuel shortages and panic buying follow.
+    eventType: Cyber
+    start: "2021-05-07T00:00:00Z"
+    end: "2021-05-14T00:00:00Z"
+    keywords: ["Colonial Pipeline", "ransomware", "DarkSide", "gasoline", "fuel shortage"]

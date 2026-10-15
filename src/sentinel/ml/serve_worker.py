@@ -17,6 +17,8 @@ import redis.asyncio as aioredis
 
 from .. import store
 from ..config import settings
+from ..events import publish_many
+from ..pipeline import Pipeline, signal_message
 from ..signals_io import INSERT_SIGNAL, api_to_params
 from .serving import Scorer, build_signal, find_corroboration, source_label
 
@@ -26,16 +28,27 @@ MODEL_PATH = os.environ.get("MODEL_PATH", "models/hybrid_v1.joblib")
 BACKLOG_HOURS = int(os.environ.get("SERVE_BACKLOG_HOURS", "48"))
 EXPLAIN_MAX_AGE_HOURS = float(os.environ.get("EXPLAIN_MAX_AGE_HOURS", "6"))
 BATCH = int(os.environ.get("SERVE_BATCH", "64"))
+REPLAY_BATCH = int(os.environ.get("REPLAY_BATCH", "8"))
 
+# Live and backfilled documents: newest first. Replay documents are handled by REPLAY_SQL (oldest first, paced).
 PENDING_SQL = """
 SELECT d.id, d.source_type, d.source_name, d.url, d.published_at, d.mode, d.text, d.meta,
        f.clean_title AS title, f.entities, f.features, f.weak_event AS rule_event
 FROM documents d
 JOIN doc_features f ON f.document_id = d.id
 LEFT JOIN doc_scores s ON s.document_id = d.id
-WHERE d.dup_of IS NULL AND (s.document_id IS NULL OR s.model_version <> $1)
+WHERE d.dup_of IS NULL AND d.mode <> 'replay' AND (s.document_id IS NULL OR s.model_version <> $1)
   AND d.published_at > now() - make_interval(hours => $3)
 ORDER BY d.published_at DESC LIMIT $2
+"""
+REPLAY_SQL = """
+SELECT d.id, d.source_type, d.source_name, d.url, d.published_at, d.mode, d.text, d.meta,
+       f.clean_title AS title, f.entities, f.features, f.weak_event AS rule_event
+FROM documents d
+JOIN doc_features f ON f.document_id = d.id
+LEFT JOIN doc_scores s ON s.document_id = d.id
+WHERE d.mode = 'replay' AND (s.document_id IS NULL OR s.model_version <> $1)
+ORDER BY d.published_at ASC, d.id ASC LIMIT $2
 """
 UPSERT_SCORE = """
 INSERT INTO doc_scores (document_id, relevance_p, relevant, event_pred, event_proba, model_version)
@@ -43,7 +56,6 @@ VALUES ($1,$2,$3,$4,$5::jsonb,$6)
 ON CONFLICT (document_id) DO UPDATE SET relevance_p=EXCLUDED.relevance_p, relevant=EXCLUDED.relevant,
   event_pred=EXCLUDED.event_pred, event_proba=EXCLUDED.event_proba, model_version=EXCLUDED.model_version, scored_at=now()
 """
-API_FIELDS_DROP = ("entities", "sentimentProbs", "modelVersion")
 
 
 def _loads(v):
@@ -57,9 +69,16 @@ def normalize(r) -> dict:
     return d
 
 
-async def load_recent(pool) -> list:
-    rows = await pool.fetch("SELECT source_name, embedding FROM signals WHERE ts > now() - interval '24 hours' "
-                            "AND embedding IS NOT NULL ORDER BY ts DESC LIMIT 5000")
+async def load_recent(pool, replay_until=None) -> list:
+    """Embeddings of the last 24h of signals (corroboration pool). For replay the pool is the replayed episode only, as of
+    `replay_until`, so live signals can never corroborate a replayed one and vice versa."""
+    if replay_until is None:
+        rows = await pool.fetch("SELECT source_name, embedding FROM signals WHERE ts > now() - interval '24 hours' "
+                                "AND mode <> 'replay' AND embedding IS NOT NULL ORDER BY ts DESC LIMIT 5000")
+    else:
+        rows = await pool.fetch("SELECT source_name, embedding FROM signals WHERE mode = 'replay' AND ts <= $1 "
+                                "AND ts > $1 - interval '24 hours' AND embedding IS NOT NULL ORDER BY ts DESC LIMIT 5000",
+                                replay_until)
     return [(r["source_name"], np.asarray(r["embedding"], dtype=float)) for r in rows]
 
 
@@ -74,14 +93,17 @@ async def duplicate_sources(pool, ids: list) -> dict:
     return out
 
 
-async def score_batch(pool, redis, scorer: Scorer, raw_rows: list):
+async def score_batch(pool, redis, scorer: Scorer, raw_rows: list, pipeline: Pipeline | None = None):
+    """Score documents -> signals. With a `pipeline`, signals are enriched with impact before they are stored and the
+    downstream steps (PRECEDENT, index, stress rules, risk index, audit) run once they are committed and published."""
     rows = [normalize(r) for r in raw_rows]
     if not rows:
         return 0, 0
     emb, rel_p, ev_proba = scorer.score_relevance_event(rows)
     keep = [i for i, p in enumerate(rel_p) if p >= scorer.threshold]
     sent = scorer.sentiment([rows[i]["title"] for i in keep])
-    recent = await load_recent(pool)
+    replay = all(r["mode"] == "replay" for r in rows)
+    recent = await load_recent(pool, max(r["published_at"] for r in rows) if replay else None)
     dups = await duplicate_sources(pool, [rows[i]["id"] for i in keep])
     now = datetime.now(timezone.utc)
     made = []
@@ -89,10 +111,12 @@ async def score_batch(pool, redis, scorer: Scorer, raw_rows: list):
         row = rows[i]
         label = source_label(row["source_name"], row["meta"])
         corr = sorted(set(find_corroboration(emb[i], label, recent)) | (dups.get(row["id"], set()) - {label}))[:5]
-        fresh = (now - row["published_at"]) < timedelta(hours=EXPLAIN_MAX_AGE_HOURS)
+        fresh = replay or (now - row["published_at"]) < timedelta(hours=EXPLAIN_MAX_AGE_HOURS)   # replays always explain
         explanation = scorer.explain(row["title"]) if fresh else []
         sig = build_signal(row, row["meta"], row["entities"], rel_p[i], ev_proba[i], sent[k], explanation, corr,
                            scorer.version)
+        if pipeline is not None:
+            pipeline.enrich(sig, emb[i])
         made.append((sig, emb[i]))
         recent.append((label, emb[i]))
     async with pool.acquire() as con:
@@ -102,12 +126,9 @@ async def score_batch(pool, redis, scorer: Scorer, raw_rows: list):
                  json.dumps(ev_proba[i]), scorer.version) for i, r in enumerate(rows)])
             for sig, e in made:
                 await con.execute(INSERT_SIGNAL, *api_to_params(sig, e))
-    if redis is not None and made:
-        pipe = redis.pipeline()
-        for sig, _ in made:
-            payload = {k: v for k, v in sig.items() if k not in API_FIELDS_DROP}
-            pipe.xadd(SIGNAL_STREAM, {"payload": json.dumps(payload)}, maxlen=20000, approximate=True)
-        await pipe.execute()
+    await publish_many(redis, [("signal", signal_message(sig), sig["mode"]) for sig, _ in made])
+    if pipeline is not None and made:
+        await pipeline.after([sig for sig, _ in made])
     return len(rows), len(made)
 
 
@@ -120,21 +141,30 @@ async def main():
     log.info("loaded models: %s", scorer.version)
     pool = await store.create_pool(settings.database_url)
     redis = aioredis.from_url(settings.redis_url, decode_responses=True)
+    pipeline = await Pipeline.create(pool, redis)
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
     while not stop.is_set():
+        await pipeline.refresh()
         rows = await pool.fetch(PENDING_SQL, scorer.version, BATCH, BACKLOG_HOURS)
-        if not rows:
+        replay_rows = await pool.fetch(REPLAY_SQL, scorer.version, REPLAY_BATCH)
+        if not rows and not replay_rows:
             try:
                 await asyncio.wait_for(stop.wait(), timeout=3)
             except asyncio.TimeoutError:
                 pass
             continue
-        t0 = loop.time()
-        n, m = await score_batch(pool, redis, scorer, rows)
-        log.info("scored %d documents -> %d signals in %.1fs", n, m, loop.time() - t0)
+        if rows:
+            t0 = loop.time()
+            n, m = await score_batch(pool, redis, scorer, rows, pipeline)
+            log.info("scored %d documents -> %d signals in %.1fs", n, m, loop.time() - t0)
+        if replay_rows:                       # one small chronological batch per cycle, paced so the UI can follow
+            n, m = await score_batch(pool, redis, scorer, replay_rows, pipeline)
+            log.info("replay: scored %d documents -> %d signals (as of %s)", n, m, replay_rows[-1]["published_at"].isoformat())
+            cfg = await store.get_config(pool, "replay") or {}
+            await asyncio.sleep(float(cfg.get("paceSeconds", settings.replay_pace_seconds)))
     await redis.aclose()
     await pool.close()
 

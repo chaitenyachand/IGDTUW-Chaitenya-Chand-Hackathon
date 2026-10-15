@@ -7,14 +7,16 @@ from datetime import datetime
 INSERT_SIGNAL = """
 INSERT INTO signals (id, document_id, ts, mode, entity, ticker, entities, headline, text, source_type, source_name,
                      url, sentiment, sentiment_probs, event_type, secondary_event_type, impact, book_impact,
-                     confidence, half_life_days, integrity, explanation, affected_holdings, embedding, model_version)
+                     confidence, half_life_days, integrity, explanation, affected_holdings, embedding, model_version,
+                     impact_basis)
 VALUES ($1,$1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16,$17,$18,$19,$20::jsonb,$21::jsonb,
-        $22::jsonb,$23,$24)
+        $22::jsonb,$23,$24,$25)
 ON CONFLICT (id) DO UPDATE SET entity=EXCLUDED.entity, ticker=EXCLUDED.ticker, entities=EXCLUDED.entities,
   sentiment=EXCLUDED.sentiment, sentiment_probs=EXCLUDED.sentiment_probs, event_type=EXCLUDED.event_type,
-  secondary_event_type=EXCLUDED.secondary_event_type, confidence=EXCLUDED.confidence, integrity=EXCLUDED.integrity,
-  explanation=EXCLUDED.explanation, embedding=EXCLUDED.embedding, model_version=EXCLUDED.model_version,
-  scored_at=now()
+  secondary_event_type=EXCLUDED.secondary_event_type, impact=EXCLUDED.impact, book_impact=EXCLUDED.book_impact,
+  confidence=EXCLUDED.confidence, half_life_days=EXCLUDED.half_life_days, integrity=EXCLUDED.integrity,
+  explanation=EXCLUDED.explanation, affected_holdings=EXCLUDED.affected_holdings, embedding=EXCLUDED.embedding,
+  model_version=EXCLUDED.model_version, impact_basis=EXCLUDED.impact_basis, scored_at=now()
 """
 
 
@@ -25,7 +27,7 @@ def api_to_params(sig: dict, embedding) -> tuple:
         sig["sentiment"], json.dumps(sig["sentimentProbs"]), sig["eventType"], sig["secondaryEventType"],
         sig["impact"], sig["bookImpact"], sig["confidence"], sig["halfLifeDays"],
         json.dumps(sig["integrity"]), json.dumps(sig["explanation"]), json.dumps(sig["affectedHoldings"]),
-        [round(float(x), 5) for x in embedding], sig["modelVersion"],
+        [round(float(x), 5) for x in embedding], sig["modelVersion"], sig.get("impactBasis"),
     )
 
 
@@ -41,4 +43,5 @@ def row_to_api(r) -> dict:
         "secondaryEventType": r["secondary_event_type"], "impact": r["impact"], "bookImpact": r["book_impact"],
         "confidence": r["confidence"], "halfLifeDays": r["half_life_days"], "integrity": _j(r["integrity"]),
         "explanation": _j(r["explanation"]), "affectedHoldings": _j(r["affected_holdings"]),
+        "impactBasis": r["impact_basis"] if "impact_basis" in r.keys() else None,
     }

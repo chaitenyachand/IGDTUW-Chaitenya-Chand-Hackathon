@@ -33,6 +33,7 @@ services:
     ports: ["8000:8000"]
     volumes:
       - ./data:/app/data
+      - ./models:/app/models
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -92,6 +93,21 @@ services:
       - ./data:/app/data
       - ./models:/app/models
       - hfcache:/models/hf
+    restart: unless-stopped
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  scheduler:
+    build: .
+    command: python -m sentinel.jobs.scheduler
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://sentinel:sentinel@db:5432/sentinel
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
     restart: unless-stopped
     depends_on:
       db: {condition: service_healthy}

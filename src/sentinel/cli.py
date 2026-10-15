@@ -323,14 +323,175 @@ async def check_sources():
         print(f"{name:<{w}}  {status:<4}  {detail}")
 
 
+
+# ---------------- platform commands (phases 4-8) ----------------
+async def _with_pool(fn):
+    pool = await store.create_pool(settings.database_url)
+    try:
+        return await fn(pool)
+    finally:
+        await pool.close()
+
+
+def _show(x):
+    print(json.dumps(x, indent=2, default=str))
+
+
+async def edgar_backfill_cmd():
+    """Full SEC 8-K history of the index stocks (needs SEC_USER_AGENT), then real abnormal-return labels."""
+    from .impact.edgar_backfill import backfill_edgar, label_events
+    async def run(pool):
+        _show(await backfill_edgar(pool, settings.sec_user_agent))
+        _show(await label_events(pool))
+    await _with_pool(run)
+
+
+async def label_events_cmd():
+    from .impact.edgar_backfill import label_events
+    await _with_pool(lambda pool: _wrap(label_events(pool)))
+
+
+async def _wrap(coro):
+    _show(await coro)
+
+
+async def train_impact_cmd():
+    from .impact.jobs import train_impact
+    async def run(pool):
+        m = await train_impact(pool)
+        _show({k: v for k, v in m.items() if k != "quintile_mean_actual"})
+    await _with_pool(run)
+
+
+async def build_library_cmd():
+    """Embed the curated event library and compute every event's real forward market paths (ml image: needs MiniLM)."""
+    from .ml.train_final import ARTIFACT_PATH, load_artifacts
+    from .ml.transformers_eval import EMBED_MODEL, make_embedder
+    from .precedent.library import build_library
+    import os
+    name = load_artifacts(ARTIFACT_PATH)["embed_model"] if os.path.exists(ARTIFACT_PATH) else EMBED_MODEL
+    embed = make_embedder(name)          # must be the model that embeds live signals, or similarities are meaningless
+    await _with_pool(lambda pool: _wrap(build_library(pool, lambda texts: embed(texts))))
+
+
+async def portfolio_cmd():
+    from .portfolio.store import build_portfolio
+    from .stress.service import ensure_default_rules
+    async def run(pool):
+        _show(await build_portfolio(pool))
+        print("default stress rules created:", await ensure_default_rules(pool))
+    await _with_pool(run)
+
+
+async def sync_caps_cmd():
+    from .index.service import sync_caps
+    await _with_pool(lambda pool: _wrap(sync_caps(pool)))
+
+
+async def risk_backfill_cmd():
+    from .risk.index import backfill
+    await _with_pool(lambda pool: _wrap(backfill(pool, "live")))
+
+
+async def index_backfill_cmd():
+    from .index.backtest import backfill_weights
+    await _with_pool(lambda pool: _wrap(backfill_weights(pool)))
+
+
+async def validate_precedent_cmd():
+    from .jobs.tasks import validate_precedent
+    await _with_pool(lambda pool: _wrap(validate_precedent(pool)))
+
+
+async def signal_backtest_cmd():
+    from .model.backtest import signal_backtest
+    await _with_pool(lambda pool: _wrap(signal_backtest(pool)))
+
+
+async def drift_baseline_cmd():
+    from .model.drift import take_baseline
+    async def run(pool):
+        s = await take_baseline(pool)
+        print(f"drift baseline stored from {s['n']} signals")
+    await _with_pool(run)
+
+
+async def eval_calibration():
+    """Calibration (reliability, ECE) of the FROZEN pipeline on the held-out test split. Same predictions as eval-test; it
+    refuses to run if the pipeline changed since eval-test, so it can never become a second tuning loop (ml image)."""
+    from .ml.baseline import save_json
+    from .ml.data import load_gold
+    from .ml.serving import Scorer
+    from .ml.train_final import ARTIFACT_PATH
+    from .model.calibration import calibration_report
+    pool = await store.create_pool(settings.database_url)
+    rows = await load_gold(pool, "test")
+    await pool.close()
+    try:
+        done = json.load(open("data/models/metrics_test.json"))
+    except FileNotFoundError:
+        print("run eval-test first: calibration is reported for the same frozen pipeline")
+        return
+    scorer = Scorer.from_disk(ARTIFACT_PATH)
+    if done.get("model_version") != scorer.version:
+        print(f"pipeline changed since eval-test ({done.get('model_version')} -> {scorer.version}): refusing")
+        return
+    _, rel_p, ev_proba = scorer.score_relevance_event(rows)
+    res = calibration_report(rows, rel_p, ev_proba, scorer.sentiment([r["title"] for r in rows]), scorer.threshold)
+    save_json("data/models/metrics_calibration.json", res)
+    print(f"ECE relevance={res['relevance']['ece']:.3f} event={res['event']['ece']} sentiment={res['sentiment']['ece']}")
+
+
+async def replay_fetch(episode: str):
+    from .demo.fetch import fetch_episode
+    _show(await fetch_episode(episode))
+
+
+async def replay_inject(episode: str):
+    import redis.asyncio as aioredis
+    from .demo.replay import inject
+    r = aioredis.from_url(settings.redis_url, decode_responses=True)
+    await _with_pool(lambda pool: _wrap(inject(pool, r, episode, actor="cli")))
+    await r.aclose()
+
+
+async def replay_reset():
+    from .demo.replay import reset
+    await _with_pool(lambda pool: _wrap(reset(pool, "cli")))
+
+
+async def audit_verify():
+    from .audit.ledger import verify
+    await _with_pool(lambda pool: _wrap(verify(pool)))
+
+
+COMMANDS = {
+    "migrate": migrate, "labels-sample": labels_sample, "import-labels": import_labels, "eval-gate": eval_gate,
+    "eval-test": eval_test, "train-final": train_final, "labels-sample-random": labels_sample_random,
+    "train-baseline": train_baseline, "eval-transformers": eval_transformers, "seed": seed, "sync-prices": sync_prices_cmd,
+    "sync-fred": sync_fred_cmd, "check-sources": check_sources,
+    "edgar-backfill": edgar_backfill_cmd, "label-events": label_events_cmd, "train-impact": train_impact_cmd,
+    "build-library": build_library_cmd, "portfolio": portfolio_cmd, "sync-caps": sync_caps_cmd,
+    "risk-backfill": risk_backfill_cmd, "index-backfill": index_backfill_cmd, "validate-precedent": validate_precedent_cmd,
+    "signal-backtest": signal_backtest_cmd, "drift-baseline": drift_baseline_cmd, "eval-calibration": eval_calibration,
+    "replay-fetch": replay_fetch, "replay-inject": replay_inject, "replay-reset": replay_reset, "audit-verify": audit_verify,
+}
+NEEDS_EPISODE = {"replay-fetch", "replay-inject"}
+
+
 def main():
     p = argparse.ArgumentParser(prog="sentinel")
-    p.add_argument("command", choices=["migrate", "labels-sample", "eval-test", "train-final", "import-labels", "eval-gate", "labels-sample-random", "train-baseline", "eval-transformers", "seed", "sync-prices", "sync-fred", "check-sources"])
+    p.add_argument("command", choices=sorted(COMMANDS))
+    p.add_argument("--episode", help="replay episode id (see data/replay/episodes.yaml)")
     a = p.parse_args()
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    asyncio.run({"migrate": migrate, "labels-sample": labels_sample, "import-labels": import_labels, "eval-gate": eval_gate, "eval-test": eval_test, "train-final": train_final, "labels-sample-random": labels_sample_random, "train-baseline": train_baseline, "eval-transformers": eval_transformers, "seed": seed, "sync-prices": sync_prices_cmd, "sync-fred": sync_fred_cmd,
-                 "check-sources": check_sources}[a.command]())
+    if a.command in NEEDS_EPISODE:
+        if not a.episode:
+            p.error(f"{a.command} needs --episode")
+        asyncio.run(COMMANDS[a.command](a.episode))
+    else:
+        asyncio.run(COMMANDS[a.command]())
 
 
 if __name__ == "__main__":
