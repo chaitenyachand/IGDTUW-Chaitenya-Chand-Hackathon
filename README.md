@@ -8,7 +8,7 @@
 
 *Turns breaking financial headlines into quantified, explainable portfolio actions, by remembering what happened the last time.*
 
-[![Demo video](https://img.shields.io/badge/Demo_video-YouTube_(unlisted)-C8102E?style=for-the-badge&logo=youtube&logoColor=white)](https://youtu.be/REPLACE_WITH_VIDEO_ID)
+[![Demo video](https://img.shields.io/badge/Demo_video-YouTube_(unlisted)-C8102E?style=for-the-badge&logo=youtube&logoColor=white)](https://youtu.be/pd1bAzlHApU)
 [![Slide deck](https://img.shields.io/badge/Deck-PDF_%C2%B7_7_slides-0B1020?style=for-the-badge)](docs/presentation.pdf)
 [![Architecture](https://img.shields.io/badge/Architecture-diagram-0B1020?style=for-the-badge)](docs/architecture.png)
 
@@ -27,11 +27,10 @@
 
 # SENTINEL: Risk Intelligence With a Memory - S&P Global & Crisil Campus Hackathon
 
-**Candidate Name:** Chaitenya Chand
-**College Email ID:** chaitenya013mca25@igdtuw.ac.in
-**College / Campus:** Indira Gandhi Delhi Technical University for Women (IGDTUW)
-**Demo Video Link:** [YouTube (unlisted)](https://youtu.be/REPLACE_WITH_VIDEO_ID)
-**Slide Deck Link (if hosted externally):** hosted in this repo: [`docs/presentation.pdf`](docs/presentation.pdf) (editable source: [`docs/presentation.pptx`](docs/presentation.pptx))
+**Candidate Name:** Chaitenya Chand  
+**College Email ID:** chaitenya013mca25@igdtuw.ac.in  
+**College / Campus:** Indira Gandhi Delhi Technical University for Women (IGDTUW)  
+**Demo Video Link:** [YouTube (unlisted)](https://youtu.be/pd1bAzlHApU)
 
 ## Contents
 
@@ -61,7 +60,7 @@ SENTINEL is an AI/NLP risk engine built around one loop with four verbs:
 | 4 | **Act** | **Adaptive Index** tilts a 15-stock index toward the signals inside strict limits (caps, floor, turnover). Auto-apply or portfolio-manager approval. Every decision lands in a SHA-256 hash-chained **audit ledger**. |
 
 <div align="center">
-<a href="https://youtu.be/REPLACE_WITH_VIDEO_ID">
+<a href="https://youtu.be/pd1bAzlHApU">
 <img src="docs/youtube-thumbnail.png" alt="Watch the 4-minute cinematic walkthrough" width="70%">
 </a>
 <br><sub>Click to watch the 4-minute cinematic walkthrough (YouTube, unlisted).</sub>
